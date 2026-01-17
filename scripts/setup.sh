@@ -1,9 +1,30 @@
 #!/bin/bash
 
-# Specula Framework Setup Script
+# Specula Framework Setup Script (uv version, macOS Apple Silicon optimized)
 # This script sets up the complete Specula environment with all dependencies
 
 set -e  # Exit on any error
+
+# Parse arguments
+SKIP_MODEL=false
+for arg in "$@"; do
+    case $arg in
+        --help|-h)
+            echo "Specula Framework Setup Script"
+            echo ""
+            echo "Usage: $0 [options]"
+            echo ""
+            echo "Options:"
+            echo "  --help, -h      Show this help message"
+            echo "  --skip-model    Skip HuggingFace model download (faster setup)"
+            echo ""
+            exit 0
+            ;;
+        --skip-model)
+            SKIP_MODEL=true
+            ;;
+    esac
+done
 
 echo "Setting up Specula Framework..."
 
@@ -42,81 +63,76 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 print_status "Project root: $PROJECT_ROOT"
 
-# Check system requirements
+# =============================================================================
+# macOS Apple Silicon: Ensure Homebrew paths are available
+# =============================================================================
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    export PATH="/opt/homebrew/bin:/opt/homebrew/opt/openjdk/bin:$PATH"
+fi
+
+# =============================================================================
+# Check/Install uv (modern Python package manager)
+# =============================================================================
+print_status "Checking for uv package manager..."
+
+if command_exists uv; then
+    print_success "uv found: $(uv --version)"
+else
+    print_status "Installing uv..."
+    if [[ "$OSTYPE" == "darwin"* ]] && command_exists brew; then
+        brew install uv
+    elif command_exists curl; then
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        export PATH="$HOME/.local/bin:$PATH"
+    else
+        print_error "Cannot install uv. Please install manually: https://docs.astral.sh/uv/getting-started/installation/"
+        exit 1
+    fi
+    
+    if command_exists uv; then
+        print_success "uv installed successfully"
+    else
+        print_error "uv installation failed"
+        exit 1
+    fi
+fi
+
+# =============================================================================
+# Check Java (required for TLA+ tools)
+# =============================================================================
 print_status "Checking system requirements..."
 
-# Check Python
-if command_exists python3; then
-    PYTHON_VERSION=$(python3 --version 2>&1 | cut -d' ' -f2)
-    print_success "Python found: $PYTHON_VERSION"
-else
-    print_error "Python 3 is required but not found"
-    exit 1
-fi
-
-# Check pip
-if command_exists pip3; then
-    print_success "pip3 found"
-else
-    print_error "pip3 is required but not found"
-    print_status "Please install pip3:"
-    print_status "  Ubuntu/Debian: sudo apt update && sudo apt install python3-pip"
-    exit 1
-fi
-
-# Check Java
 if command_exists java; then
-    JAVA_VERSION=$(java -version 2>&1 | head -n1 | cut -d'"' -f2)
+    JAVA_VERSION=$(java -version 2>&1 | head -n1)
     print_success "Java found: $JAVA_VERSION"
 else
     print_error "Java 11+ is required but not found"
-    print_status "Please install Java 11 or higher:"
-    print_status "  Ubuntu/Debian: sudo apt update && sudo apt install openjdk-11-jdk"
-    print_status "  macOS: brew install openjdk@11"
+    print_status "Please install Java 11+:"
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        print_status "  Ubuntu/Debian: sudo apt install openjdk-11-jdk"
+        print_status "  CentOS/RHEL: sudo yum install java-11-openjdk-devel"
+    else
+        print_status "  macOS: brew install openjdk"
+        print_status "  sudo ln -sfn /opt/homebrew/opt/openjdk/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk.jdk"
+    fi
     exit 1
 fi
 
-# Check/Install Maven
+# =============================================================================
+# Check optional dependencies (warn but don't fail)
+# =============================================================================
+
+# Check Maven (optional, for CFA tool in step2)
 if command_exists mvn; then
     MVN_VERSION=$(mvn -version 2>&1 | head -n1 | cut -d' ' -f3)
     print_success "Maven found: $MVN_VERSION"
 else
-    print_warning "Maven not found - required for CFA tool"
-    print_status "Installing Maven..."
-    
-    # Detect OS and install Maven
+    print_warning "Maven not found - required for step2 (CFA tool)"
     if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        if command_exists apt; then
-            sudo apt update && sudo apt install -y maven
-        elif command_exists yum; then
-            sudo yum install -y maven
-        elif command_exists dnf; then
-            sudo dnf install -y maven
-        else
-            print_error "Cannot auto-install Maven. Please install manually:"
-            print_status "  Ubuntu/Debian: sudo apt install maven"
-            print_status "  CentOS/RHEL: sudo yum install maven"
-            exit 1
-        fi
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-        if command_exists brew; then
-            brew install maven
-        else
-            print_error "Cannot auto-install Maven. Please install Homebrew first or install Maven manually"
-            exit 1
-        fi
+        print_status "  Ubuntu/Debian: sudo apt install maven"
+        print_status "  CentOS/RHEL: sudo yum install maven"
     else
-        print_error "Unsupported OS for auto-installation. Please install Maven manually"
-        exit 1
-    fi
-    
-    # Verify Maven installation
-    if command_exists mvn; then
-        MVN_VERSION=$(mvn -version 2>&1 | head -n1 | cut -d' ' -f3)
-        print_success "Maven installed successfully: $MVN_VERSION"
-    else
-        print_error "Maven installation failed"
-        exit 1
+        print_status "  macOS: brew install maven"
     fi
 fi
 
@@ -125,49 +141,88 @@ if command_exists go; then
     GO_VERSION=$(go version | cut -d' ' -f3)
     print_success "Go found: $GO_VERSION"
 else
-    print_warning "Go not found - required for etcd example"
-    print_status "To install Go:"
-    print_status "  Ubuntu/Debian: sudo apt update && sudo apt install golang-go"
-    print_status "  macOS: brew install go"
+    print_warning "Go not found - required for etcd example instrumentation"
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        print_status "  Ubuntu/Debian: sudo apt install golang-go"
+    else
+        print_status "  macOS: brew install go"
+    fi
 fi
 
-# Install Python dependencies
-print_status "Installing Python dependencies..."
+# =============================================================================
+# Create Python virtual environment with uv
+# =============================================================================
+print_status "Setting up Python virtual environment..."
 cd "$PROJECT_ROOT"
 
-if [ -f "src/requirements.txt" ]; then
-    print_status "Installing from src/requirements.txt..."
-    pip3 install -r src/requirements.txt
-    print_success "Python dependencies installed"
-else
-    print_warning "requirements.txt not found, installing common dependencies..."
-    pip3 install torch>=1.9.0 --index-url https://download.pytorch.org/whl/cpu
-    pip3 install anthropic>=0.34.0 openai>=1.0.0 google-generativeai>=0.6.0 pyyaml>=6.0 requests>=2.25.0 sentence-transformers>=2.2.0 numpy>=1.21.0
+if [ -d ".venv" ]; then
+    print_warning "Existing .venv found, removing..."
+    rm -rf .venv
 fi
 
+# Create venv - try Python versions in order of preference
+print_status "Creating virtual environment..."
+for PYTHON_VERSION in 3.12 3.11 3.10; do
+    if uv venv --python "$PYTHON_VERSION" 2>/dev/null; then
+        print_success "Virtual environment created with Python $PYTHON_VERSION"
+        break
+    fi
+done
+
+if [ ! -d ".venv" ]; then
+    print_error "Failed to create virtual environment. Please install Python 3.10+"
+    exit 1
+fi
+
+# =============================================================================
+# Install Python dependencies
+# =============================================================================
+print_status "Installing Python dependencies..."
+
+# Handle PyTorch for different platforms
+TEMP_REQUIREMENTS=$(mktemp)
+if [ -f "src/requirements.txt" ]; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # Apple Silicon: skip CPU-only index, use MPS-enabled default
+        grep -v "extra-index-url.*pytorch.*cpu" "src/requirements.txt" > "$TEMP_REQUIREMENTS"
+        print_status "Installing from src/requirements.txt (Apple Silicon optimized)..."
+    else
+        # Linux: use CPU-only PyTorch as specified in requirements
+        cp "src/requirements.txt" "$TEMP_REQUIREMENTS"
+        print_status "Installing from src/requirements.txt..."
+    fi
+    uv pip install -r "$TEMP_REQUIREMENTS"
+    rm "$TEMP_REQUIREMENTS"
+    print_success "Python dependencies installed"
+else
+    print_error "src/requirements.txt not found"
+    exit 1
+fi
+
+# =============================================================================
 # Create necessary directories
+# =============================================================================
 print_status "Creating necessary directories..."
 mkdir -p "$PROJECT_ROOT/lib"
 mkdir -p "$PROJECT_ROOT/models"
+mkdir -p "$PROJECT_ROOT/output"
 
-# Download TLA+ tools
+# =============================================================================
+# Set up TLA+ tools
+# =============================================================================
 print_status "Setting up TLA+ tools..."
 
-# Download tla2tools.jar if not exists
-if [ ! -f "$PROJECT_ROOT/lib/tla2tools.jar" ]; then
+# Check if TLA+ Toolbox is installed and symlink its jar
+TLA_TOOLBOX_JAR="/Applications/TLA+ Toolbox.app/Contents/Eclipse/tla2tools.jar"
+
+if [ -f "$TLA_TOOLBOX_JAR" ]; then
+    print_status "Found TLA+ Toolbox installation, creating symlink..."
+    ln -sf "$TLA_TOOLBOX_JAR" "$PROJECT_ROOT/lib/tla2tools.jar"
+    print_success "Symlinked tla2tools.jar from TLA+ Toolbox"
+elif [ ! -f "$PROJECT_ROOT/lib/tla2tools.jar" ]; then
     print_status "Downloading tla2tools.jar..."
     TLA_TOOLS_URL="https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar"
-    
-    if command_exists wget; then
-        wget -O "$PROJECT_ROOT/lib/tla2tools.jar" "$TLA_TOOLS_URL"
-    elif command_exists curl; then
-        curl -L -o "$PROJECT_ROOT/lib/tla2tools.jar" "$TLA_TOOLS_URL"
-    else
-        print_error "Neither wget nor curl found. Please download tla2tools.jar manually:"
-        print_status "  URL: $TLA_TOOLS_URL"
-        print_status "  Save to: $PROJECT_ROOT/lib/tla2tools.jar"
-        exit 1
-    fi
+    curl -L -o "$PROJECT_ROOT/lib/tla2tools.jar" "$TLA_TOOLS_URL"
     print_success "tla2tools.jar downloaded"
 else
     print_success "tla2tools.jar already exists"
@@ -177,82 +232,49 @@ fi
 if [ ! -f "$PROJECT_ROOT/lib/CommunityModules-deps.jar" ]; then
     print_status "Downloading CommunityModules-deps.jar..."
     COMMUNITY_MODULES_URL="https://github.com/tlaplus/CommunityModules/releases/download/202505152026/CommunityModules-deps.jar"
-    
-    if command_exists wget; then
-        wget -O "$PROJECT_ROOT/lib/CommunityModules-deps.jar" "$COMMUNITY_MODULES_URL"
-    elif command_exists curl; then
-        curl -L -o "$PROJECT_ROOT/lib/CommunityModules-deps.jar" "$COMMUNITY_MODULES_URL"
-    else
-        print_warning "Could not download CommunityModules-deps.jar automatically"
-        print_status "Please download manually from: $COMMUNITY_MODULES_URL"
-    fi
-    
-    if [ -f "$PROJECT_ROOT/lib/CommunityModules-deps.jar" ]; then
-        print_success "CommunityModules-deps.jar downloaded"
-    else
-        print_warning "CommunityModules-deps.jar download failed - this is optional for basic functionality"
-    fi
+    curl -L -o "$PROJECT_ROOT/lib/CommunityModules-deps.jar" "$COMMUNITY_MODULES_URL" || {
+        print_warning "CommunityModules-deps.jar download failed - optional for basic functionality"
+    }
+    [ -f "$PROJECT_ROOT/lib/CommunityModules-deps.jar" ] && print_success "CommunityModules-deps.jar downloaded"
 else
     print_success "CommunityModules-deps.jar already exists"
 fi
 
-# Download Hugging Face model
-print_status "Setting up Hugging Face embedding model..."
-MODEL_DIR="$PROJECT_ROOT/models/huggingface-MiniLM-L6-v2"
+# =============================================================================
+# Download Hugging Face model (for RAG functionality)
+# =============================================================================
+if [ "$SKIP_MODEL" = false ]; then
+    print_status "Setting up Hugging Face embedding model..."
+    MODEL_DIR="$PROJECT_ROOT/models/huggingface-MiniLM-L6-v2"
 
-if [ ! -d "$MODEL_DIR" ]; then
-    print_status "Downloading sentence-transformers/all-MiniLM-L6-v2 model..."
-    
-    # Create the model directory
-    mkdir -p "$MODEL_DIR"
-    
-    # Use Python to download the model
-    python3 -c "
+    if [ ! -d "$MODEL_DIR" ] || [ -z "$(ls -A "$MODEL_DIR" 2>/dev/null)" ]; then
+        print_status "Downloading sentence-transformers/all-MiniLM-L6-v2 model..."
+        mkdir -p "$MODEL_DIR"
+
+        # Use the venv Python
+        "$PROJECT_ROOT/.venv/bin/python" -c "
 from sentence_transformers import SentenceTransformer
-import os
-import shutil
 
 model_name = 'sentence-transformers/all-MiniLM-L6-v2'
 target_dir = '$MODEL_DIR'
 
 print(f'Downloading model: {model_name}')
-print(f'Target directory: {target_dir}')
-
-try:
-    # Download model to a temporary cache location
-    model = SentenceTransformer(model_name)
-    
-    # Get the cache directory where the model was downloaded
-    cache_dir = model._modules['0'].auto_model.config._name_or_path
-    if not os.path.isabs(cache_dir):
-        from transformers import AutoModel
-        temp_model = AutoModel.from_pretrained(model_name)
-        cache_dir = temp_model.config._name_or_path
-    
-    print(f'Model downloaded successfully to cache')
-    
-    # Save the model to our target directory
-    model.save(target_dir)
-    print(f'Model saved to: {target_dir}')
-    
-except Exception as e:
-    print(f'Error downloading model: {e}')
-    print('You may need to install additional dependencies or check your internet connection')
-    exit(1)
-"
-    
-    if [ $? -eq 0 ] && [ -d "$MODEL_DIR" ]; then
-        print_success "Hugging Face model downloaded successfully"
+model = SentenceTransformer(model_name)
+model.save(target_dir)
+print(f'Model saved to: {target_dir}')
+" && print_success "Hugging Face model downloaded" || {
+            print_warning "Model download failed - will be downloaded on first use"
+        }
     else
-        print_warning "Failed to download Hugging Face model automatically"
-        print_status "The model will be downloaded automatically on first use"
-        print_status "Make sure you have internet connection when running the framework"
+        print_success "Hugging Face model already exists"
     fi
 else
-    print_success "Hugging Face model already exists"
+    print_status "Skipping HuggingFace model download (--skip-model flag)"
 fi
 
+# =============================================================================
 # Set up example directories
+# =============================================================================
 print_status "Setting up example directories..."
 mkdir -p "$PROJECT_ROOT/examples/etcd/"{config,source,output,runners,spec,scripts}
 mkdir -p "$PROJECT_ROOT/examples/etcd/spec/step4/spec"
@@ -295,15 +317,9 @@ EOF
     print_success "Default raft_config.yaml created"
 fi
 
-# Verify knowledge base exists
-if [ -f "$PROJECT_ROOT/src/rag/initial_errors.json" ]; then
-    print_success "Knowledge base found at src/rag/initial_errors.json"
-else
-    print_warning "Knowledge base not found at src/rag/initial_errors.json"
-    print_status "RAG functionality may not work without the knowledge base"
-fi
-
+# =============================================================================
 # Verify installation
+# =============================================================================
 print_status "Verifying installation..."
 
 # Test Java with TLA+ tools
@@ -313,65 +329,43 @@ else
     print_warning "TLA+ tools verification failed - may need manual setup"
 fi
 
-# Test Python imports
+# Test Python imports using venv
 print_status "Testing Python dependencies..."
-python3 -c "
+"$PROJECT_ROOT/.venv/bin/python" -c "
 import sys
-missing_packages = []
-
-packages = [
-    'yaml', 'anthropic', 'openai', 'requests', 
-    'torch', 'sentence_transformers', 'numpy'
-]
+packages = ['yaml', 'anthropic', 'openai', 'requests', 'torch', 'sentence_transformers', 'numpy', 'mcp']
 
 for package in packages:
     try:
-        if package == 'yaml':
-            import yaml
-        elif package == 'anthropic':
-            import anthropic
-        elif package == 'openai':
-            import openai
-        elif package == 'requests':
-            import requests
-        elif package == 'torch':
-            import torch
-        elif package == 'sentence_transformers':
-            from sentence_transformers import SentenceTransformer
-        elif package == 'numpy':
-            import numpy
+        __import__(package if package != 'yaml' else 'yaml')
         print(f'✓ {package}')
     except ImportError as e:
         print(f'✗ {package}: {e}')
-        missing_packages.append(package)
+        sys.exit(1)
 
-if missing_packages:
-    print(f'Missing packages: {missing_packages}')
-    sys.exit(1)
-else:
-    print('All Python dependencies are available')
-" && print_success "Python environment OK" || print_warning "Python environment may have issues"
+print('All Python dependencies are available')
+" && print_success "Python environment OK" || print_warning "Some Python dependencies missing"
 
-# Test Maven (for CFA tool)
-if command_exists mvn; then
-    print_status "Testing Maven..."
-    if mvn -version >/dev/null 2>&1; then
-        print_success "Maven working correctly"
-    else
-        print_warning "Maven verification failed"
-    fi
-fi
+# =============================================================================
+# Create specula command wrapper (uses venv automatically)
+# =============================================================================
+print_status "Creating specula command wrapper..."
 
-# Create convenience aliases/scripts
-print_status "Creating convenience scripts..."
-
-# Create specula command wrapper
 cat > "$PROJECT_ROOT/specula" << 'EOF'
 #!/bin/bash
 # Specula Framework Command Wrapper
-# Simple wrapper to unify all commands under ./specula
+# Uses the project's virtual environment automatically
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_PYTHON="$SCRIPT_DIR/.venv/bin/python"
+
+# Check venv exists
+if [ ! -f "$VENV_PYTHON" ]; then
+    echo "Error: Virtual environment not found at $SCRIPT_DIR/.venv"
+    echo "Please run: bash scripts/setup.sh"
+    exit 1
+fi
+
 export PYTHONPATH="$SCRIPT_DIR/src:$PYTHONPATH"
 
 # Check if no arguments provided
@@ -391,14 +385,8 @@ if [ $# -eq 0 ]; then
     echo "Examples:"
     echo "  $0 step1 examples/etcd/source/raft.go output/etcd/spec/step1/ --mode draft-based"
     echo "  $0 step2 output/etcd/spec/step1/corrected_spec/Raft.tla output/etcd/spec/step2/Raft.tla"
-    echo "  $0 step2 input.tla output.tla --algorithm sa  # Run static analysis only"
-    echo "  $0 step2 input.tla output.tla --algorithm uc  # Run unchanged variable analysis only"
-    echo "  $0 step2 input.tla output.tla --algorithm pc  # Run process cutting analysis only"
-    echo "  $0 step2 input.tla output.tla --show-tree     # Show parse tree GUI"
     echo "  $0 step3 output/etcd/spec/step2/Raft.tla --model-check"
-    echo "  $0 step4.1 --tla examples/etcd/spec/step3/Raft.tla --cfg examples/etcd/spec/step3/Raft.cfg --auto-config output/etcd/spec/step4/raft_config.yaml output/etcd/spec/step4/spec/"
-    echo "  $0 step4.2 examples/etcd/config/raft_config.yaml examples/etcd/source/raft.go --stub-template templates/instrumentation/go_trace_stub.template --output examples/etcd/output/instrumented_raft.go --verbose"
-    exit 1
+    exit 0
 fi
 
 COMMAND="$1"
@@ -406,15 +394,13 @@ shift
 
 case "$COMMAND" in
     "step1")
-        python3 -m src.core.iispec_generator "$@"
+        "$VENV_PYTHON" -m src.core.iispec_generator "$@"
         ;;
         
     "step2")
         if [ $# -lt 2 ]; then
             echo "Error: step2 requires input and output arguments"
             echo "Usage: $0 step2 <input> <output> [--algorithm <algorithm>] [--show-tree] [--debug]"
-            echo "Algorithm options: all (default), sa, uc, ud, pc"
-            echo "Debug options: --debug (print IN/OUT variables for debugging)"
             exit 1
         fi
         
@@ -422,34 +408,30 @@ case "$COMMAND" in
         OUTPUT_FILE="$2"
         shift 2
         
-        # Check if CFA tool exists
         CFA_SCRIPT="$SCRIPT_DIR/tools/cfa/run.sh"
         if [ ! -f "$CFA_SCRIPT" ]; then
             echo "Error: CFA tool not found at: $CFA_SCRIPT"
             exit 1
         fi
         
-        # Create output directory
         mkdir -p "$(dirname "$OUTPUT_FILE")"
-        
-        # Run CFA transformation with remaining arguments
         bash "$CFA_SCRIPT" "$INPUT_FILE" "$OUTPUT_FILE" "$@"
         ;;
         
     "step3")
-        python3 -m src.core.runtime_corrector "$@"
+        "$VENV_PYTHON" -m src.core.runtime_corrector "$@"
         ;;
 
     "step4")
-        python3 -m src.core.combined_step4 "$@"
+        "$VENV_PYTHON" -m src.core.combined_step4 "$@"
         ;;
         
     "step4.1")
-        python3 -m src.core.spectrace_generator "$@"
+        "$VENV_PYTHON" -m src.core.spectrace_generator "$@"
         ;;
         
     "step4.2")
-        python3 -m src.core.instrumentation "$@"
+        "$VENV_PYTHON" -m src.core.instrumentation "$@"
         ;;
         
     *)
@@ -461,36 +443,19 @@ esac
 EOF
 chmod +x "$PROJECT_ROOT/specula"
 
-
-
+# =============================================================================
+# Done!
+# =============================================================================
 print_success "Setup completed successfully!"
 echo
-print_status "Specula is ready to use!"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}Specula is ready to use!${NC}"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo
-print_status "Verification tests:"
-print_status "  Test TLA+ tools: java -cp lib/tla2tools.jar tlc2.TLC -help"
-print_status "  Test CFA tool: cd tools/cfa && mvn compile"
+print_status "Quick start:"
+echo "  export ANTHROPIC_API_KEY=your_key_here"
+echo "  ./specula step1 examples/etcd/source/raft.go output/etcd/spec/step1/ --mode draft-based"
 echo
-print_status "Unified Command Interface:"
-print_status "  ./specula help                    # Show all available commands"
-print_status "  ./specula step1 <input> <output> # Generate TLA+ specification"
-print_status "  ./specula step2 <input> <output> # Transform TLA+ specification (all algorithms)"
-print_status "  ./specula step2 <input> <output> --algorithm sa # Static analysis only"
-print_status "  ./specula step2 <input> <output> --algorithm uc # Unchanged variable analysis only"
-print_status "  ./specula step2 <input> <output> --algorithm ud # Undefined variable analysis only"
-print_status "  ./specula step2 <input> <output> --algorithm pc # Process cutting analysis only"
-print_status "  ./specula step3 <spec_file>      # Verify TLA+ specification"
-print_status "  ./specula step4 [args]           # Run combined trace validation pipeline"
-print_status "  ./specula step4.1 <src> <config> # Instrument source code"
-print_status "  ./specula step4.2 <spec> <trace> # Validate trace"
-echo
+print_status "Note: The ./specula command uses the virtual environment automatically."
+print_status "No need to activate .venv manually!"
 
-# Check if we're in examples/etcd and offer to run a test
-if [ "$(basename "$(pwd)")" = "etcd" ] && [ -f "scripts/run_instrumentation_test.sh" ]; then
-    echo -n "Would you like to run a quick test now? (y/n): "
-    read -r response
-    if [ "$response" = "y" ] || [ "$response" = "Y" ]; then
-        print_status "Running quick test..."
-        bash scripts/run_instrumentation_test.sh
-    fi
-fi
