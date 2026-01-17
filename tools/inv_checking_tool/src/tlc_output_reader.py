@@ -24,7 +24,6 @@ Example usage:
     diff = reader.compare_states(-2, -1)  # Compare last two states
 """
 
-import io
 import json
 import logging
 import re
@@ -35,11 +34,6 @@ from dataclasses import dataclass, field
 from .trace_reader import TraceReader
 
 logger = logging.getLogger(__name__)
-from .utils.preprocessing import (
-    preprocess_tlc_output,
-    convert_to_trace_format,
-    strip_ansi_codes,
-)
 from .utils.path_parser import (
     parse_variable_path,
     get_value_at_path,
@@ -99,7 +93,6 @@ class TLCOutputReader:
             format: Trace format to use. Options:
                 - "json": Parse JSON from -dumptrace json output (default)
                 - "tla": Parse TLA+ syntax from -dumptrace tla output
-                - "text": Use legacy text-scraping parser
             save_action_name: Whether to extract action names from states.
 
         Raises:
@@ -124,19 +117,16 @@ class TLCOutputReader:
             self._json_path = path
             base = name[:-len('_trace.json')]
             self._tla_path = parent / f"{base}_trace.tla"
-            self._text_path = parent / f"{base}.out"
         elif name.endswith('_trace.tla'):
             # User passed TLA+ trace file directly
             self._tla_path = path
             base = name[:-len('_trace.tla')]
             self._json_path = parent / f"{base}_trace.json"
-            self._text_path = parent / f"{base}.out"
         else:
-            # User passed base output file (e.g., nohup.out)
+            # User passed base name - infer trace file paths
             base = path.stem
             self._json_path = parent / f"{base}_trace.json"
             self._tla_path = parent / f"{base}_trace.tla"
-            self._text_path = path
 
         self._load_trace()
 
@@ -147,17 +137,20 @@ class TLCOutputReader:
             List of format strings in order of preference.
         """
         if self.requested_format == "json":
-            return ["json", "tla", "text"]
+            return ["json", "tla"]
         elif self.requested_format == "tla":
-            return ["tla", "json", "text"]
-        else:  # text
-            return ["text"]
+            return ["tla", "json"]
+        else:
+            # Default to json if unknown format requested
+            return ["json", "tla"]
 
     def _load_trace(self) -> None:
         """Load trace using requested format with fallback.
 
         Tries formats in order based on requested_format, falling back
         to alternatives if the preferred format is unavailable.
+
+        Supports JSON and TLA+ syntax formats from TLC's -dumptrace option.
         """
         formats_to_try = self._get_format_chain()
         last_error = None
@@ -173,20 +166,29 @@ class TLCOutputReader:
                     self._parse_tla_syntax(self._tla_path)
                     used_format = "tla"
                     break
-                elif fmt == "text" and self._text_path.exists():
-                    self._parse_text(self._text_path)
-                    used_format = "text"
-                    break
             except Exception as e:
                 logger.warning(f"Failed to parse {fmt} format: {e}")
                 last_error = e
                 continue
 
         if used_format is None:
+            available_paths = []
+            if self._json_path.exists():
+                available_paths.append(str(self._json_path))
+            if self._tla_path.exists():
+                available_paths.append(str(self._tla_path))
+
             if last_error:
-                raise ValueError(f"Could not parse trace in any format. Last error: {last_error}")
+                raise ValueError(
+                    f"Could not parse trace in any format. Last error: {last_error}. "
+                    f"Available files: {available_paths or 'none'}"
+                )
             else:
-                raise FileNotFoundError(f"No trace file found for {self.file_path}")
+                raise FileNotFoundError(
+                    f"No trace file found for {self.file_path}. "
+                    f"Expected JSON at {self._json_path} or TLA+ at {self._tla_path}. "
+                    f"Use TLC's -dumptrace json or -dumptrace tla option."
+                )
 
         # Log if we fell back from the requested format
         if used_format != self.requested_format:
@@ -194,34 +196,6 @@ class TLCOutputReader:
                 f"Requested format '{self.requested_format}' not available, "
                 f"using '{used_format}' instead"
             )
-
-    def _parse_text(self, text_path: Path) -> None:
-        """Parse trace from legacy text format (TLC stdout).
-
-        Args:
-            text_path: Path to the TLC output file.
-        """
-        # Preprocess the file
-        preprocessed, self._metadata = preprocess_tlc_output(str(text_path))
-
-        # Convert to trace format
-        trace_content = convert_to_trace_format(preprocessed)
-
-        # Parse using TraceReader
-        tr = TraceReader(save_action_name=self._save_action_name)
-        f = io.StringIO(trace_content)
-
-        # Use trace_reader_with_state_str to get action details
-        for state, state_str in tr.trace_reader_with_state_str(f):
-            self._states.append(state)
-
-            # Extract action detail from state string
-            action_detail = None
-            for line in state_str.split('\n'):
-                if line.startswith('\\*') and '<' in line:
-                    action_detail = line.strip()[2:].strip()  # Remove \* prefix
-                    break
-            self._action_details.append(action_detail)
 
     def _parse_json(self, json_path: Path) -> None:
         """Parse trace from TLC's JSON dump format (-dumptrace json).

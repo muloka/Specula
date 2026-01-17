@@ -350,21 +350,23 @@ class TestTLCOutputReaderEdgeCases:
             TLCOutputReader("/nonexistent/path/to/file.log")
 
     def test_create_minimal_trace_file(self):
-        """Test loading a minimal valid trace file."""
-        content = """Error: Invariant TestInv is violated.
-Error: The behavior up to this point is:
-State 1: <Init line 1, col 1 to line 1, col 10 of module Test>
-/\\ x = 1
-/\\ y = 2
-
-State 2: <Next line 2, col 1 to line 2, col 10 of module Test>
-/\\ x = 2
-/\\ y = 3
-
-The number of states generated: 100
-"""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False) as f:
-            f.write(content)
+        """Test loading a minimal valid trace file using JSON format."""
+        json_content = json.dumps({
+            "states": [
+                {"num": 1, "action": {"name": "Init"},
+                 "variables": {"x": 1, "y": 2}},
+                {"num": 2, "action": {"name": "Next"},
+                 "variables": {"x": 2, "y": 3}}
+            ],
+            "metadata": {
+                "violation_type": "invariant",
+                "violation_name": "TestInv"
+            }
+        })
+        with tempfile.NamedTemporaryFile(
+            mode='w', suffix='_trace.json', delete=False
+        ) as f:
+            f.write(json_content)
             f.flush()
 
             try:
@@ -384,17 +386,23 @@ The number of states generated: 100
                 os.unlink(f.name)
 
     def test_trace_with_nested_structures(self):
-        """Test loading trace with complex nested structures."""
-        content = """Error: Invariant TestInv is violated.
-Error: The behavior up to this point is:
-State 1: <Init line 1, col 1 to line 1, col 10 of module Test>
-/\\ config = (s1 :> [a |-> 1, b |-> 2] @@ s2 :> [a |-> 3, b |-> 4])
-/\\ log = <<[term |-> 1, value |-> "x"], [term |-> 2, value |-> "y"]>>
-
-The number of states generated: 100
-"""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False) as f:
-            f.write(content)
+        """Test loading trace with complex nested structures using JSON format."""
+        json_content = json.dumps({
+            "states": [
+                {
+                    "num": 1,
+                    "action": {"name": "Init"},
+                    "variables": {
+                        "config": {"s1": {"a": 1, "b": 2}, "s2": {"a": 3, "b": 4}},
+                        "log": [{"term": 1, "value": "x"}, {"term": 2, "value": "y"}]
+                    }
+                }
+            ]
+        })
+        with tempfile.NamedTemporaryFile(
+            mode='w', suffix='_trace.json', delete=False
+        ) as f:
+            f.write(json_content)
             f.flush()
 
             try:
@@ -610,26 +618,27 @@ Trace ==
 class TestFormatFallback:
     """Tests for format fallback behavior."""
 
-    def test_json_fallback_to_text(self):
-        """Test fallback from JSON to text when JSON file doesn't exist."""
-        # Create a text format file (legacy format)
-        content = """Error: Invariant TestInv is violated.
-Error: The behavior up to this point is:
-State 1: <Init line 1, col 1 to line 1, col 10 of module Test>
-/\\ x = 1
+    def test_json_fallback_to_tla(self):
+        """Test fallback from JSON to TLA+ when JSON file doesn't exist."""
+        # Create a TLA+ format file
+        tla_content = """---- MODULE Trace ----
+Trace ==
+  <<
+    [x |-> 1],
+    [x |-> 2]
+  >>
 
-State 2: <Next line 2, col 1 to line 2, col 10 of module Test>
-/\\ x = 2
-
-The number of states generated: 100
+TraceActions ==
+  <<"Init", "Next">>
+====
 """
         with tempfile.NamedTemporaryFile(
-            mode='w', suffix='.log', delete=False
+            mode='w', suffix='_trace.tla', delete=False
         ) as f:
-            f.write(content)
+            f.write(tla_content)
             f.flush()
             try:
-                # Request JSON format, but only text file exists
+                # Request JSON format, but only TLA+ file exists
                 reader = TLCOutputReader(f.name, format="json")
                 assert reader.trace_length == 2
 
@@ -638,23 +647,23 @@ The number of states generated: 100
             finally:
                 os.unlink(f.name)
 
-    def test_text_format_explicit(self):
-        """Test explicit text format selection."""
-        content = """Error: Invariant TestInv is violated.
-Error: The behavior up to this point is:
-State 1: <Init line 1, col 1 to line 1, col 10 of module Test>
-/\\ x = 1
-
-The number of states generated: 100
-"""
+    def test_tla_fallback_to_json(self):
+        """Test fallback from TLA+ to JSON when TLA+ file doesn't exist."""
+        json_content = json.dumps({
+            "states": [
+                {"num": 1, "action": {"name": "Init"}, "variables": {"x": 1}},
+                {"num": 2, "action": {"name": "Next"}, "variables": {"x": 2}}
+            ]
+        })
         with tempfile.NamedTemporaryFile(
-            mode='w', suffix='.log', delete=False
+            mode='w', suffix='_trace.json', delete=False
         ) as f:
-            f.write(content)
+            f.write(json_content)
             f.flush()
             try:
-                reader = TLCOutputReader(f.name, format="text")
-                assert reader.trace_length == 1
+                # Request TLA+ format, but only JSON file exists
+                reader = TLCOutputReader(f.name, format="tla")
+                assert reader.trace_length == 2
                 assert reader.get_state(1).variables["x"] == 1
             finally:
                 os.unlink(f.name)
@@ -663,6 +672,20 @@ The number of states generated: 100
         """Test that FileNotFoundError is raised when no file exists."""
         with pytest.raises(FileNotFoundError):
             TLCOutputReader("/nonexistent/path/to/file.log", format="json")
+
+    def test_error_message_helpful(self):
+        """Test that error message is helpful when no trace files exist."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_path = os.path.join(tmpdir, "nonexistent.out")
+            try:
+                TLCOutputReader(fake_path, format="json")
+                assert False, "Should have raised FileNotFoundError"
+            except FileNotFoundError as e:
+                # Check that error message mentions both expected formats
+                error_msg = str(e)
+                assert "_trace.json" in error_msg
+                assert "_trace.tla" in error_msg
+                assert "-dumptrace" in error_msg
 
 
 def run_tests():
