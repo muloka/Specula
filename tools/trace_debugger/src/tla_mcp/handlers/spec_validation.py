@@ -116,14 +116,32 @@ class SpecValidationHandler(BaseHandler):
             )
 
             output = result.stdout + result.stderr
-            syntax_valid = result.returncode == 0
+
+            # Check for explicit error indicators (SANY can return 0 even with errors)
+            error_indicators = [
+                "Fatal errors",
+                "*** Errors:",
+                "Could not parse",
+                "Parsing failed",
+                "Semantic errors"
+            ]
+            syntax_valid = True
+            for indicator in error_indicators:
+                if indicator in output:
+                    syntax_valid = False
+                    break
+
+            # If no error indicators, check for success marker or fall back to exit code
+            if syntax_valid:
+                if "Semantic processing of module" not in output:
+                    syntax_valid = result.returncode == 0
 
             # Extract error messages if validation failed
             errors = []
             if not syntax_valid:
                 for line in output.split('\n'):
                     line = line.strip()
-                    if 'Error:' in line or 'error' in line.lower():
+                    if 'Error:' in line or 'error' in line.lower() or 'Unknown operator' in line:
                         errors.append(line)
 
             return {

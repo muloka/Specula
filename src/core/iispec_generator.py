@@ -135,11 +135,27 @@ class TLAValidator:
         try:
             cmd = ["java", "-cp", self.tla_tools_path, "tla2sany.SANY", tla_file]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout)
-            success = result.returncode == 0
             output = result.stdout + result.stderr
-            
-            return success, output
-            
+
+            # Check for explicit error indicators (SANY can return 0 even with errors)
+            error_indicators = [
+                "Fatal errors",
+                "*** Errors:",
+                "Could not parse",
+                "Parsing failed",
+                "Semantic errors"
+            ]
+            for indicator in error_indicators:
+                if indicator in output:
+                    return False, output
+
+            # Success: no errors found and has success marker
+            if "Semantic processing of module" in output:
+                return True, output
+
+            # Fallback to exit code
+            return result.returncode == 0, output
+
         except subprocess.TimeoutExpired:
             return False, f"SANY validation timed out after {self.timeout} seconds"
         except Exception as e:
