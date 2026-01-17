@@ -4,11 +4,6 @@ import logging
 from typing import Optional
 
 try:
-    import google.generativeai as google_generativeai
-except ImportError:  # pragma: no cover - optional dependency until installed
-    google_generativeai = None
-
-try:
     from google import genai as google_genai
 except ImportError:  # pragma: no cover - optional dependency until installed
     google_genai = None
@@ -38,7 +33,6 @@ class LLMClient:
             self.provider = "gemini"
 
         # Initialise provider-specific state
-        self._gemini_client_mode: Optional[str] = None
         self.thinking_budget = api_config.get("thinking_budget", 32768)
 
         # Get API key from config or environment variables
@@ -123,24 +117,12 @@ class LLMClient:
                 raise ImportError("openai package not found. Please install it with: pip install openai")
 
         elif self.provider == "gemini":
-            if google_generativeai is not None:
-                configure_kwargs = {"api_key": api_key}
-                base_url = api_config.get("base_url")
-                if base_url:
-                    configure_kwargs["client_options"] = {"api_endpoint": base_url}
-
-                google_generativeai.configure(**configure_kwargs)
-                self.client = google_generativeai
-                self._gemini_client_mode = "generativeai"
-            elif google_genai is not None:
-                # Fallback to the google-genai client if the legacy generative AI SDK is unavailable
-                self.client = google_genai.Client(api_key=api_key)
-                self._gemini_client_mode = "google_genai"
-            else:
+            if google_genai is None:
                 raise ImportError(
-                    "Neither google-generativeai nor google-genai packages were found. "
-                    "Please install one of them to use the Gemini provider."
+                    "google-genai package not found. "
+                    "Please install it with: pip install google-genai"
                 )
+            self.client = google_genai.Client(api_key=api_key)
 
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
@@ -166,9 +148,7 @@ class LLMClient:
                 if self.provider == "anthropic":
                     return self._get_anthropic_completion(prompt, content)
                 elif self.provider == "gemini":
-                    if self._gemini_client_mode == "google_genai":
-                        return self._get_genai_completion(prompt, content)
-                    return self._get_gemini_completion(prompt, content)
+                    return self._get_genai_completion(prompt, content)
                 else:
                     return self._get_openai_completion(prompt, content)
 
@@ -258,43 +238,6 @@ class LLMClient:
 
         except Exception as e:
             logger.error(f"OpenAI-compatible API request failed: {e}")
-            raise
-
-    def _get_gemini_completion(self, prompt: str, content: str) -> str:
-        """Get completion from Gemini API using google-generativeai"""
-        if self.client is None or google_generativeai is None:
-            raise RuntimeError("Gemini client not initialized")
-
-        try:
-            model = self.client.GenerativeModel(
-                model_name=self.model,
-                system_instruction=prompt,
-                generation_config={
-                    "temperature": self.temperature,
-                    "max_output_tokens": self.max_tokens,
-                },
-            )
-
-            response = model.generate_content(
-                [
-                    {
-                        "role": "user",
-                        "parts": [content],
-                    }
-                ],
-                request_options={"timeout": self.client_timeout},
-            )
-
-            full_response = getattr(response, "text", "") or ""
-            if not full_response.strip():
-                raise ValueError("Gemini API returned an empty response")
-
-            logger.info("Gemini request completed")
-            logger.debug(f"First line of response: {full_response.splitlines()[0][:50]}...")
-            return full_response
-
-        except Exception as e:
-            logger.error(f"Gemini API request failed: {e}")
             raise
 
     def _get_genai_completion(self, prompt: str, content: str) -> str:
