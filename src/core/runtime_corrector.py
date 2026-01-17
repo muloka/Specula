@@ -41,14 +41,21 @@ class TLCRunner:
             spec_path = Path(spec_file).resolve()
             config_path = Path(config_file).resolve()
             working_dir = spec_path.parent
-            
+
+            # Copy config to same directory as spec if not already there
+            # TLC resolves config paths relative to its working directory
+            local_config = working_dir / config_path.name
+            if local_config.resolve() != config_path:
+                shutil.copy(config_path, local_config)
+
+            # Use relative paths (just filenames) since cwd is set to working_dir
             cmd = [
                 "java", "-cp", self.tla_tools_path,
-                "tlc2.TLC", "-config", str(config_path), str(spec_path)
+                "tlc2.TLC", "-config", config_path.name, spec_path.name
             ]
-            
+
             result = subprocess.run(
-                cmd, capture_output=True, text=True, 
+                cmd, capture_output=True, text=True,
                 timeout=timeout, cwd=working_dir
             )
             

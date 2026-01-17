@@ -84,11 +84,12 @@ public class SANYTransformerCli {
             System.exit(1);
         }
         
-        Path inputPath = Paths.get(inputFile);
+        Path inputPath = Paths.get(inputFile).toAbsolutePath();
         Path outputPath = Paths.get(outputFile);
+        String absoluteInputFile = inputPath.toString();
         String sourceText = Files.readString(inputPath);
-        
-        System.out.println("Processing input file: " + inputPath);
+
+        System.out.println("Processing input file: " + absoluteInputFile);
         if (showTree) {
             System.out.println("SANY AST information will be displayed");
         }
@@ -99,14 +100,14 @@ public class SANYTransformerCli {
         // --- 3. SANY Parsing ---
         System.out.println("Parsing TLA+ file with SANY...");
         
-        // Create SpecObj and parse
-        SpecObj spec = new SpecObj(inputFile);
-        
-        // Capture SANY output if debug mode  
+        // Create SpecObj and parse using absolute path for proper module resolution
+        SpecObj spec = new SpecObj(absoluteInputFile);
+
+        // Capture SANY output if debug mode
         PrintStream sanyOutput = debugMode ? System.out : new PrintStream(new ByteArrayOutputStream());
-        
+
         try {
-            SANY.frontEndMain(spec, inputFile, sanyOutput);
+            SANY.frontEndMain(spec, absoluteInputFile, sanyOutput);
             sanyOutput.flush();
             
             if (spec.getErrorLevel() > 0) {
@@ -122,7 +123,16 @@ public class SANYTransformerCli {
             }
             
             System.out.println("✅ SANY parsing successful!");
-            
+
+            // Verify root module was found - can fail silently even with successful parse
+            ModuleNode rootModule = spec.getRootModule();
+            if (rootModule == null) {
+                System.err.println("ERROR: SANY parsing completed but no root module was found.");
+                System.err.println("This usually indicates an issue with module resolution or EXTENDS clauses.");
+                System.err.println("Verify that the input file path is correct and all extended modules are accessible.");
+                System.exit(1);
+            }
+
         } catch (Exception e) {
             System.err.println("ERROR: SANY parsing failed: " + e.getMessage());
             if (debugMode) {
