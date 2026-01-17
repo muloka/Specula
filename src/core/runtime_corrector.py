@@ -19,6 +19,7 @@ import logging
 # Import unified LLM client and config
 from ..llm.client import get_llm_client
 from ..utils.config import get_config
+from ..rag.retriever import ErrorRetriever
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
@@ -104,6 +105,18 @@ class RuntimeCorrector:
         self.enable_checkpoints = enable_checkpoints
         self.cfg_file = cfg_file
 
+        # Initialize RAG retriever for TLC errors
+        self.retriever = None
+        knowledge_base_path = self.config.get('paths', {}).get('knowledge_base', 'src/rag/initial_errors.json')
+        if os.path.exists(knowledge_base_path):
+            try:
+                self.retriever = ErrorRetriever(knowledge_base_path, config_path)
+                logger.info("RAG retriever initialized for TLC error correction")
+            except Exception as e:
+                logger.warning(f"Failed to initialize RAG retriever: {e}")
+        else:
+            logger.warning(f"Knowledge base not found at {knowledge_base_path}, RAG disabled")
+
         logger.info("Runtime corrector initialized with unified LLM client")
     
     def _load_prompt(self, filename: str) -> str:
@@ -173,25 +186,66 @@ class RuntimeCorrector:
         
         return config_content
     
-    def fix_runtime_errors(self, spec_content: str, config_content: str, error_output: str) -> str:
-        """Fix runtime errors based on TLC output"""
+    def fix_runtime_errors(
+        self,
+        spec_content: str,
+        config_content: str,
+        error_output: str,
+        attempt_history: Optional[List[Dict]] = None
+    ) -> str:
+        """Fix runtime errors based on TLC output
+
+        Args:
+            spec_content: Current TLA+ specification
+            config_content: TLC configuration content
+            error_output: TLC error output to fix
+            attempt_history: Optional list of previous attempts with their errors
+        """
         logger.info("Fixing runtime errors...")
-        
+
+        # Build RAG context if retriever is available
+        rag_context = ""
+        if self.retriever:
+            try:
+                retrieved = self.retriever.search(error_output, top_k=3)
+                if retrieved:
+                    rag_hints = []
+                    for r in retrieved:
+                        hint = f"- Error: {r.get('error_message', '')[:200]}\n  Solution: {r.get('solution', '')}"
+                        rag_hints.append(hint)
+                    rag_context = "\n\nSimilar errors and their solutions from knowledge base:\n" + "\n".join(rag_hints)
+                    logger.debug(f"RAG context added with {len(retrieved)} similar errors")
+            except Exception as e:
+                logger.warning(f"RAG search failed: {e}")
+
+        # Build attempt history context
+        history_context = ""
+        if attempt_history:
+            history_lines = ["\n\nPrevious correction attempts that failed:"]
+            for attempt in attempt_history[-3:]:  # Show last 3 attempts
+                history_lines.append(
+                    f"- Attempt {attempt.get('attempt', '?')}: "
+                    f"Error was: {attempt.get('error', '')[:300]}..."
+                )
+            history_context = "\n".join(history_lines)
+            history_context += "\n\nPlease try a different approach than the previous attempts."
+
         prompt = self.correction_prompt.format(
             original_spec=spec_content,
             config_content=config_content,
             error_output=error_output
         )
-        
+        prompt += rag_context + history_context
+
         response = self.llm.get_completion(
             "You are a TLA+ expert. Fix the runtime errors in the given specification based on the TLC error output.",
             prompt
         )
         corrected_spec = self._extract_tla_code(response)
-        
+
         if not corrected_spec.strip():
             raise ValueError("Failed to extract corrected specification from LLM response")
-        
+
         return corrected_spec
     
     def correct_specification(self, input_spec_path: str, output_dir: str) -> Dict:
@@ -255,23 +309,28 @@ class RuntimeCorrector:
             final_spec = current_spec
         else:
             logger.info("TLC found errors, starting correction process...")
-            
+
             previous_output = tlc_output
             corrected_outputs = set()
             last_attempt_dir: Optional[Path] = None
-            
+            attempt_history: List[Dict] = []  # Track previous attempts for smarter retry
+            original_spec_for_learning = spec_content  # Save for auto-learning
+            last_error_for_learning = tlc_output  # Track for auto-learning
+
             while not success:
                 cycle_attempts = 0
-                
+
                 while cycle_attempts < self.max_correction_attempts and not success:
                     cycle_attempts += 1
                     total_attempts += 1
                     attempt_index = total_attempts
                     logger.info(f"Correction attempt {attempt_index} (cycle {(attempt_index-1)//self.max_correction_attempts})")
-                    
+
                     try:
-                        # Fix the errors
-                        corrected_spec = self.fix_runtime_errors(current_spec, config_content, tlc_output)
+                        # Fix the errors with attempt history context
+                        corrected_spec = self.fix_runtime_errors(
+                            current_spec, config_content, tlc_output, attempt_history
+                        )
                         
                         # Save corrected version in attempt directory
                         corrected_module_name = self._extract_module_name(corrected_spec)
@@ -290,8 +349,27 @@ class RuntimeCorrector:
                         if success:
                             logger.info(f"Correction successful after {attempt_index} attempt(s)!")
                             final_spec = corrected_spec
+
+                            # Auto-learn from successful correction
+                            if self.retriever and hasattr(self.retriever, 'save_pattern'):
+                                try:
+                                    self.retriever.save_pattern(
+                                        last_error_for_learning,
+                                        f"Corrected spec that fixed the error",
+                                        error_type="tlc_runtime"
+                                    )
+                                    logger.info("Saved successful correction pattern to knowledge base")
+                                except Exception as e:
+                                    logger.debug(f"Could not save pattern: {e}")
                             break
                         else:
+                            # Track this failed attempt for history
+                            attempt_history.append({
+                                "attempt": attempt_index,
+                                "error": tlc_output[:500]  # Truncate for context window
+                            })
+                            last_error_for_learning = tlc_output
+
                             if previous_output != tlc_output:
                                 corrected_outputs.add(previous_output)
                                 previous_output = tlc_output

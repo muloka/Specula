@@ -2,20 +2,26 @@ import torch
 from sentence_transformers import SentenceTransformer
 import json
 import numpy as np
-from typing import List, Dict
+import logging
+from typing import List, Dict, Optional
 from ..utils.config import get_config
+
+logger = logging.getLogger(__name__)
+
 
 class ErrorRetriever:
     def __init__(self, data_path: str, config_path: str = None):
         """Initialize retriever
-        
+
         Args:
             data_path: Error data file path
             config_path: Configuration file path
         """
+        self.data_path = data_path  # Save for auto-learning
+
         # Get model path from configuration file
         config = get_config(config_path)
-        model_path = config.get('paths.local_embedding_model', 
+        model_path = config.get('paths.local_embedding_model',
                                'models/huggingface-MiniLM-L6-v2')
         
         # Try to load from local path first, fallback to downloading from HuggingFace
@@ -107,3 +113,54 @@ class ErrorRetriever:
             
         print(f"Search completed, found {len(results)} relevant results")
         return results
+
+    def save_pattern(
+        self,
+        error_msg: str,
+        solution: str,
+        error_type: str = "auto",
+        context: str = ""
+    ) -> bool:
+        """Save a successful correction as a new pattern for future RAG retrieval.
+
+        Args:
+            error_msg: The error message that was fixed
+            solution: Description of how the error was fixed
+            error_type: Type of error (e.g., "sany", "tlc_runtime", "auto")
+            context: Optional additional context
+
+        Returns:
+            True if pattern was saved successfully
+        """
+        try:
+            # Generate new error ID
+            existing_ids = [e.get('error_id', '') for e in self.error_data]
+            auto_count = sum(1 for eid in existing_ids if eid.startswith('AUTO_'))
+            new_id = f"AUTO_{auto_count + 1:04d}"
+
+            # Create new pattern
+            new_pattern = {
+                "error_id": new_id,
+                "error_message": error_msg[:500],  # Truncate to reasonable size
+                "solution": solution[:1000],
+                "context": context[:500] if context else f"Auto-captured from successful {error_type} correction",
+                "error_type": error_type,
+                "auto_generated": True
+            }
+
+            # Add to in-memory data
+            self.error_data.append(new_pattern)
+
+            # Save to file
+            with open(self.data_path, 'w', encoding='utf-8') as f:
+                json.dump(self.error_data, f, indent=2, ensure_ascii=False)
+
+            # Rebuild embeddings index
+            self.error_embeddings = self._encode_errors()
+
+            logger.info(f"Saved new error pattern: {new_id}")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Failed to save pattern: {e}")
+            return False
