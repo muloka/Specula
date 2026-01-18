@@ -365,6 +365,12 @@ public class SANYTransformerCli {
         // === Add Init/Next/Spec for TLC model checking ===
         result.append("\n\\* === TLC Model Checking Support ===\n\n");
 
+        // Generate Handle wrappers for push operators (they need pc guards)
+        List<String> pushHandlers = generatePushHandlers(cfgBuilder.getCfgFuncNodes(), allVariables);
+        for (String handler : pushHandlers) {
+            result.append(handler).append("\n");
+        }
+
         // Generate Init - initial state with type-based defaults
         result.append("Init ==\n");
         for (int i = 0; i < allVariables.size(); i++) {
@@ -373,8 +379,15 @@ public class SANYTransformerCli {
             result.append("    /\\ ").append(var).append(" = ").append(defaultVal).append("\n");
         }
 
-        // Generate Next - disjunction of entry point actions
+        // Generate Next - disjunction of entry point actions (including push handlers)
         List<String> entryPoints = getEntryPointActions(cfgBuilder.getCfgFuncNodes());
+        // Add push handler names to entry points
+        for (CFGFuncNode func : cfgBuilder.getCfgFuncNodes()) {
+            String name = func.getFuncName();
+            if (name.contains("_push_")) {
+                entryPoints.add("Handle" + name);
+            }
+        }
         if (!entryPoints.isEmpty()) {
             result.append("\nNext ==\n");
             for (int i = 0; i < entryPoints.size(); i++) {
@@ -432,8 +445,9 @@ public class SANYTransformerCli {
      */
     private static String getDefaultValue(String varName, List<String> constants) {
         // Auxiliary variables from PC algorithm
+        // pc = Nil allows entry point operators (those guarded by pc = Nil) to fire
         if (varName.equals("pc")) {
-            return "\"Start\"";
+            return "Nil";
         }
         if (varName.equals("stack")) {
             return "<<>>";
@@ -499,21 +513,153 @@ public class SANYTransformerCli {
     }
 
     /**
-     * Get list of entry point actions (Handle* operators without parameters).
+     * Generate Handle wrappers for push operators.
+     * Push operators need pc guards to be called as continuations.
+     */
+    private static List<String> generatePushHandlers(List<CFGFuncNode> funcNodes, List<String> allVariables) {
+        List<String> handlers = new ArrayList<>();
+
+        for (CFGFuncNode func : funcNodes) {
+            String name = func.getFuncName();
+            if (!name.contains("_push_")) {
+                continue;
+            }
+
+            List<String> params = func.getParameters();
+            StringBuilder sb = new StringBuilder();
+
+            // Generate Handle wrapper
+            sb.append("Handle").append(name).append(" ==\n");
+            sb.append("    /\\ pc = \"").append(name).append("\"\n");
+
+            // Call the operator with args from info
+            sb.append("    /\\ ").append(name).append("(");
+            for (int i = 0; i < params.size(); i++) {
+                if (i > 0) sb.append(", ");
+                sb.append("info.args[").append(i + 1).append("]");
+            }
+            sb.append(")\n");
+
+            // Add UNCHANGED for variables not typically modified by push ops
+            // Push ops typically only modify pc, stack, info
+            List<String> unchangedVars = new ArrayList<>();
+            for (String var : allVariables) {
+                if (!var.equals("pc") && !var.equals("stack") && !var.equals("info")) {
+                    unchangedVars.add(var);
+                }
+            }
+            if (!unchangedVars.isEmpty()) {
+                sb.append("    /\\ UNCHANGED <<");
+                sb.append(String.join(", ", unchangedVars));
+                sb.append(">>\n");
+            }
+
+            handlers.add(sb.toString());
+        }
+
+        return handlers;
+    }
+
+    /**
+     * Get list of entry point actions (Handle* operators).
      * These form the disjuncts of the Next relation.
+     * Parameterized operators are wrapped with existential quantification.
      */
     private static List<String> getEntryPointActions(List<CFGFuncNode> funcNodes) {
         List<String> entryPoints = new ArrayList<>();
 
         for (CFGFuncNode func : funcNodes) {
             String name = func.getFuncName();
-            // Entry points are Handle* operators with no parameters
-            if (name.startsWith("Handle") && func.getParameters().isEmpty()) {
+            if (!name.startsWith("Handle")) {
+                continue;
+            }
+
+            List<String> params = func.getParameters();
+            if (params.isEmpty()) {
+                // Parameterless - add directly
                 entryPoints.add(name);
+            } else {
+                // Parameterized - wrap with existential quantification
+                String quantified = generateQuantifiedAction(name, params);
+                if (quantified != null) {
+                    entryPoints.add(quantified);
+                }
             }
         }
 
         return entryPoints;
+    }
+
+    /**
+     * Generate existentially quantified action for a parameterized operator.
+     * Uses parameter name conventions to infer domains.
+     * Wraps in parentheses to ensure proper scoping in disjunctions.
+     */
+    private static String generateQuantifiedAction(String operatorName, List<String> params) {
+        StringBuilder sb = new StringBuilder();
+        // Wrap in parentheses to ensure each \E has its own scope in disjunctions
+        sb.append("(\\E ");
+
+        List<String> bindings = new ArrayList<>();
+        List<String> paramNames = new ArrayList<>();
+
+        for (String param : params) {
+            String domain = inferParameterDomain(param);
+            if (domain == null) {
+                // Can't infer domain - skip this operator for automatic inclusion
+                // Step 3 LLM can add it if needed
+                return null;
+            }
+            bindings.add(param + " \\in " + domain);
+            paramNames.add(param);
+        }
+
+        sb.append(String.join(", ", bindings));
+        sb.append(" : ");
+        sb.append(operatorName);
+        sb.append("(");
+        sb.append(String.join(", ", paramNames));
+        sb.append("))");  // Close both the operator call and the wrapping parentheses
+
+        return sb.toString();
+    }
+
+    /**
+     * Infer the domain for a parameter based on naming conventions.
+     * Returns null if domain cannot be inferred.
+     */
+    private static String inferParameterDomain(String paramName) {
+        // Common server-related parameter names
+        if (paramName.equals("s") || paramName.equals("server") ||
+            paramName.equals("to") || paramName.equals("from") ||
+            paramName.equals("peer") || paramName.equals("node") ||
+            paramName.equals("i") || paramName.equals("j")) {
+            return "Server";
+        }
+
+        // Message parameter
+        if (paramName.equals("m") || paramName.equals("msg") || paramName.equals("message")) {
+            return "messages";
+        }
+
+        // Config-related (set of servers)
+        if (paramName.contains("Config") || paramName.contains("config")) {
+            return "SUBSET Server";
+        }
+
+        // Entries/log entries - complex type, skip for now
+        if (paramName.equals("entries") || paramName.equals("entry")) {
+            return null;
+        }
+
+        // Term/index - naturals
+        if (paramName.equals("term") || paramName.equals("index") ||
+            paramName.equals("n") || paramName.equals("k")) {
+            return "Nat";
+        }
+
+        // Unknown - return null to skip
+        return null;
     }
 
     /**

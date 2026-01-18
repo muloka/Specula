@@ -252,9 +252,12 @@ public class CFGVarChangeAnalyzer {
         CFGStmtNode pc_stmt = new CFGStmtNode(1, "pc = Nil", null, CFGStmtNode.StmtType.NORMAL);
         root.addChild(pc_stmt);
         CFGStmtNode call_stmt = new CFGStmtNode(1, Call_uncalled(funcNode), null, CFGStmtNode.StmtType.NORMAL);
-        pc_stmt.addChild(call_stmt); 
+        pc_stmt.addChild(call_stmt);
         Set<String> unchangedVar = new HashSet<>(variables);
         unchangedVar.removeAll(funcVarChange.get(funcNode.getFuncName()));
+        // Remove stack and info since they're explicitly set below
+        unchangedVar.remove("stack");
+        unchangedVar.remove("info");
         CFGStmtNode unchanged_stmt = new CFGStmtNode(1, getUnchangedVar(unchangedVar), null, CFGStmtNode.StmtType.NORMAL);
         call_stmt.addChild(unchanged_stmt);
         callGraph.addFuncNode(newFuncNode);
