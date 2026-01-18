@@ -57,6 +57,16 @@ You are a TLA+ specification expert specializing in error correction and specifi
    - Check constant and variable declarations
    - Verify Init and Next definitions
 
+7. **Forward Reference / Unknown Operator** (CRITICAL):
+   - Error: "Unknown operator: `xyz'" where xyz IS defined later in the file
+   - Cause: TLA+ requires operators to be DEFINED BEFORE they are USED
+   - Fix: REORDER the operator definitions so xyz appears BEFORE where it's used
+   - Strategy: Move helper operators (reset, becomeFollower, appendEntry, etc.) ABOVE actions that use them
+   - Example fix: If Step(m) uses becomeFollower but becomeFollower is defined after Step:
+     - Move the entire becomeFollower definition to ABOVE the Step definition
+     - Do NOT rename or remove any operators
+   - Correct order: Helper operators first, then core actions that use them, then Init/Next/Spec last
+
 ## Error Analysis Context:
 
 **Original Specification:**

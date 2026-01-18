@@ -20,7 +20,16 @@ You are a TLA+ specification expert. Your task is to translate source code into 
 
 5. **Syntax Correctness**: The specification must pass TLA+ SANY validation (syntactic correctness).
 
-## TLA+ Template Structure:
+6. **Operator Definition Order (CRITICAL)**:
+   - TLA+ requires operators to be DEFINED BEFORE they are USED
+   - Define ALL helper operators (reset, becomeFollower, appendEntry, handleMessage, etc.) FIRST
+   - Define core actions that USE those helpers (Step, campaign, etc.) AFTER the helpers
+   - Define Init, Next, and Spec LAST
+   - Correct order: Constants → Variables → Type Definitions → Helper Operators → Core Actions → Init → Next → Spec
+   - WRONG: Step(m) == ... becomeFollower(...) ... then later becomeFollower(x,y) == ...
+   - RIGHT: becomeFollower(x,y) == ... then later Step(m) == ... becomeFollower(...) ...
+
+## TLA+ Template Structure (Note: Operators must be defined BEFORE use):
 
 ```tla
 ---- MODULE ModuleName ----
