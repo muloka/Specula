@@ -361,9 +361,38 @@ public class SANYTransformerCli {
                 }
             }
         }
-        
+
+        // === Add Init/Next/Spec for TLC model checking ===
+        result.append("\n\\* === TLC Model Checking Support ===\n\n");
+
+        // Generate Init - initial state with type-based defaults
+        result.append("Init ==\n");
+        for (int i = 0; i < allVariables.size(); i++) {
+            String var = allVariables.get(i);
+            String defaultVal = getDefaultValue(var, allConstants);
+            result.append("    /\\ ").append(var).append(" = ").append(defaultVal).append("\n");
+        }
+
+        // Generate Next - disjunction of entry point actions
+        List<String> entryPoints = getEntryPointActions(cfgBuilder.getCfgFuncNodes());
+        if (!entryPoints.isEmpty()) {
+            result.append("\nNext ==\n");
+            for (int i = 0; i < entryPoints.size(); i++) {
+                String prefix = (i == 0) ? "       " : "    \\/ ";
+                result.append(prefix).append(entryPoints.get(i)).append("\n");
+            }
+        } else {
+            // Fallback if no Handle* actions found - use all parameterless operators
+            result.append("\nNext ==\n");
+            result.append("    \\* TODO: Add state transition actions here\n");
+            result.append("    FALSE\n");
+        }
+
+        // Generate Spec - temporal formula
+        result.append("\nSpec == Init /\\ [][Next]_vars\n");
+
         // Add footer
-        result.append("\\* End of generated TLA+ specification\n");
+        result.append("\n\\* End of generated TLA+ specification\n");
 
         List<String> modulePostlude = cfgBuilder.getModulePostlude();
         if (!modulePostlude.isEmpty()) {
@@ -396,7 +425,97 @@ public class SANYTransformerCli {
             builder.append("\n");
         }
     }
-    
+
+    /**
+     * Get default value for a variable based on its name pattern.
+     * Uses type-based heuristics - Step 3 LLM can refine if needed.
+     */
+    private static String getDefaultValue(String varName, List<String> constants) {
+        // Auxiliary variables from PC algorithm
+        if (varName.equals("pc")) {
+            return "\"Start\"";
+        }
+        if (varName.equals("stack")) {
+            return "<<>>";
+        }
+        if (varName.equals("info")) {
+            return "[args |-> <<>>]";
+        }
+
+        // Message-related variables - typically sets
+        if (varName.equals("messages")) {
+            return "{}";
+        }
+        if (varName.equals("votes")) {
+            return "[s \\in Server |-> {}]";
+        }
+
+        // Log is a sequence
+        if (varName.equals("log")) {
+            return "[s \\in Server |-> <<>>]";
+        }
+
+        // Index variables - integers starting at 0 or 1
+        if (varName.endsWith("Index") || varName.equals("commitIndex")) {
+            return "[s \\in Server |-> 0]";
+        }
+
+        // Elapsed counters
+        if (varName.endsWith("Elapsed")) {
+            return "[s \\in Server |-> 0]";
+        }
+
+        // Boolean-like variables
+        if (varName.equals("preVote") || varName.equals("isLearner")) {
+            return "[s \\in Server |-> FALSE]";
+        }
+
+        // State variable (Raft-specific)
+        if (varName.equals("state")) {
+            return "[s \\in Server |-> StateFollower]";
+        }
+
+        // Term is an integer
+        if (varName.equals("currentTerm")) {
+            return "[s \\in Server |-> 0]";
+        }
+
+        // Variables that reference None/Nil
+        if (varName.equals("votedFor") || varName.equals("leaderId") || varName.equals("leadTransferee")) {
+            // Check if None is in constants
+            if (constants.contains("None")) {
+                return "[s \\in Server |-> None]";
+            }
+            return "[s \\in Server |-> Nil]";
+        }
+
+        // Size/count variables
+        if (varName.endsWith("Size") || varName.endsWith("Timeout")) {
+            return "[s \\in Server |-> 0]";
+        }
+
+        // Default: function mapping Server to 0
+        return "[s \\in Server |-> 0]";
+    }
+
+    /**
+     * Get list of entry point actions (Handle* operators without parameters).
+     * These form the disjuncts of the Next relation.
+     */
+    private static List<String> getEntryPointActions(List<CFGFuncNode> funcNodes) {
+        List<String> entryPoints = new ArrayList<>();
+
+        for (CFGFuncNode func : funcNodes) {
+            String name = func.getFuncName();
+            // Entry points are Handle* operators with no parameters
+            if (name.startsWith("Handle") && func.getParameters().isEmpty()) {
+                entryPoints.add(name);
+            }
+        }
+
+        return entryPoints;
+    }
+
     /**
      * Print AST tree structure recursively
      */
