@@ -264,7 +264,14 @@ public class CFGVarChangeAnalyzer {
         callGraph.addFuncName(newFuncNode.getFuncName());
         CFGCALLEdge callEdge = new CFGCALLEdge(call_stmt, newFuncNode, funcNode, null, null);
         callGraph.addCallEdge(callEdge);
-        CFGStmtNode stack_stmt = new CFGStmtNode(1, "stack' = <<[backsite |-> Nil, info |-> [args |-> <<>>, temp |-> <<>>], args |-> <<>>]>>", null, CFGStmtNode.StmtType.NORMAL);
+
+        // Set info' with the handler's parameters so continuation handlers can read them via info.args[N]
+        String infoStr = setInfoStr(funcNode.getParameters(), new HashSet<>());
+        CFGStmtNode info_stmt = new CFGStmtNode(1, infoStr, null, CFGStmtNode.StmtType.NORMAL);
+        call_stmt.addChild(info_stmt);
+
+        // Stack frame stores info' which now contains the parameters
+        CFGStmtNode stack_stmt = new CFGStmtNode(1, "stack' = <<[backsite |-> Nil, info |-> info', args |-> <<>>]>>", null, CFGStmtNode.StmtType.NORMAL);
         call_stmt.addChild(stack_stmt);
     }
 
