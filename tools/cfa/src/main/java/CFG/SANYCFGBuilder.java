@@ -38,7 +38,7 @@ public class SANYCFGBuilder {
     private static final int N_InfixExpr = 371;
     private static final int N_GeneralId = 358;
     private static final int N_Number = 385;
-    private static final int N_Identifier = 289;
+    private static final int N_Identifier = 231;  // IDENTIFIER token type from TLAplusParserConstants
     private static final int N_IdentLHS = 366;
     private static final int N_ParenExpr = 393;
     
@@ -1544,22 +1544,24 @@ public class SANYCFGBuilder {
     private String extractFirstIdentifier(SyntaxTreeNode node) {
         if (node instanceof SyntaxTreeNode) {
             SyntaxTreeNode stn = (SyntaxTreeNode) node;
-            
+
             if (stn.getKind() == N_Identifier) {
                 return stn.getImage();
             }
-            
+
             TreeNode[] children = stn.heirs();
             if (children != null) {
                 for (TreeNode child : children) {
-                    String identifier = extractFirstIdentifier((SyntaxTreeNode) child);
-                    if (identifier != null && !identifier.startsWith("N_")) {
-                        return identifier;
+                    if (child instanceof SyntaxTreeNode) {
+                        String identifier = extractFirstIdentifier((SyntaxTreeNode) child);
+                        if (identifier != null && !identifier.startsWith("N_")) {
+                            return identifier;
+                        }
                     }
                 }
             }
         }
-        
+
         return null;
     }
     
