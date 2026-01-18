@@ -5,7 +5,7 @@ llm:
   provider: "anthropic"  # Options: "anthropic", "openai", "deepseek", "gemini"
   base_url: "https://api.anthropic.com"
   # Model name - please choose a model appropriate for your API access
-  model: "claude-opus-4-20250514"  # Options: claude-sonnet-4-20250514, claude-opus-4-20250514
+  model: "claude-opus-4-5-20251101"  # Options: claude-sonnet-4-20250514, claude-opus-4-20250514, claude-opus-4-5-20251101
   
   # API Parameters
   max_tokens: 32000       # Maximum output tokens (claude-sonnet-4-20250514 has a limit of 64000)
@@ -46,7 +46,7 @@ logging:
 
 # Agent Configuration (optional). Uses llm.* defaults if fields are omitted.
 agent:
-  model: "claude-opus-4-20250514"
+  model: "claude-opus-4-5-20251101"
   max_tokens: 32000
   temperature: 0.1
   timeout: 900000
