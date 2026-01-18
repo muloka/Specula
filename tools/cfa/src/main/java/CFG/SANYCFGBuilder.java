@@ -548,18 +548,18 @@ public class SANYCFGBuilder {
     private CFGStmtNode visitCaseExpression(SyntaxTreeNode caseExprNode) {
         TreeNode[] children = caseExprNode.heirs();
         if (children == null || children.length == 0) return null;
-        
+
         // Create CASE root with CASE type as container for branches (empty content)
         CFGStmtNode caseRoot = new CFGStmtNode(indentationLevel, "", null, CFGStmtNode.StmtType.CASE);
-        
+
         indentationLevel++;
-        
+
         // Process case arms and other arms
         boolean isFirst = true;
         for (TreeNode child : children) {
             if (child instanceof SyntaxTreeNode) {
                 SyntaxTreeNode armNode = (SyntaxTreeNode) child;
-                
+
                 if (armNode.getKind() == N_CaseArm) {
                     // Regular case arm: condition -> body
                     CFGStmtNode caseArm = processCaseArm(armNode, isFirst);

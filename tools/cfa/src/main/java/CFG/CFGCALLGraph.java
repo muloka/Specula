@@ -320,6 +320,7 @@ public class CFGCALLGraph {
     private boolean isStructuredControlFlowType(CFGStmtNode.StmtType type) {
         return type == CFGStmtNode.StmtType.IF_ELSE ||
                type == CFGStmtNode.StmtType.CASE ||
+               type == CFGStmtNode.StmtType.CASE_ARM ||
                type == CFGStmtNode.StmtType.LET ||
                type == CFGStmtNode.StmtType.EXISTS ||
                type == CFGStmtNode.StmtType.FORALL ||

@@ -223,10 +223,10 @@ public class CFGFuncToStr {
      */
     private List<String> handleCaseStatement(CFGStmtNode caseNode, CFGStmtNode exit) {
         List<String> result = new ArrayList<>();
-        
+
         // Find convergence point for all case branches
         CFGStmtNode convergencePoint = findConvergencePoint(caseNode, exit);
-        
+
         // CASE root node should have empty content, process children directly
         List<CFGStmtNode> children = caseNode.getChildren();
         for (int i = 0; i < children.size(); i++) {
