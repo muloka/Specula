@@ -427,7 +427,9 @@ public class CFGVarChangeAnalyzer {
                     //     pc' = stack[Len(stack)].backsite
                     //     info' = stack[Len(stack)].info
                     //     stack' = Tail(stack)
-                    if ((cuttedFunc.contains(funcNode) && funcNode.getInvocationKind() == CFGFuncNode.InvocationKind.CALLED) && !stmt.getContent().contains("info' =") && !stmt.getContent().contains("stack' =")){
+                    String stmtContent = stmt.getContent();
+                    if (stmtContent == null) stmtContent = "";
+                    if ((cuttedFunc.contains(funcNode) && funcNode.getInvocationKind() == CFGFuncNode.InvocationKind.CALLED) && !stmtContent.contains("info' =") && !stmtContent.contains("stack' =")){
                         CFGStmtNode pc_stmt = new CFGStmtNode(stmt.getIndentation(), "pc' = stack[Len(stack)].backsite", null, CFGStmtNode.StmtType.NORMAL);
                         pc_stmt.InVar = new HashSet<>(stmt.OutVar);
                         pc_stmt.OutVar = new HashSet<>(stmt.OutVar);
@@ -630,6 +632,7 @@ public class CFGVarChangeAnalyzer {
         
         // Handle the content of the current node
         String content = stmtNode.getContent();
+        if (content == null) content = "";
         for (String var : stmtNode.InVar) {
             Set<String> skip_set = new HashSet<String>(Arrays.asList("info", "pc", "stack"));
             if (skip_set.contains(var)) {
@@ -786,7 +789,8 @@ public class CFGVarChangeAnalyzer {
                 // Build regular expression pattern - function name cannot be letter, number, underscore
                 String pattern = "(?<![\\w_])" + funcName + "(?![\\w_])";
                 // If find matching
-                if (stmt.getContent().matches(".*" + pattern + ".*")) {
+                String stmtContent = stmt.getContent();
+                if (stmtContent != null && stmtContent.matches(".*" + pattern + ".*")) {
                     // Find corresponding target function node
                     CFGFuncNode targetFunc = null;
                     for (CFGFuncNode fn : callGraph.getFuncNodes()) {
@@ -1113,11 +1117,13 @@ public class CFGVarChangeAnalyzer {
             indent += "  ";
         }
         
-        // Print statement information
-        System.err.println(indent + "Statement [" + stmt.getType() + "]: " + 
-                          (stmt.getContent().length() > 80 ? 
-                           stmt.getContent().substring(0, 80) + "..." : 
-                           stmt.getContent()));
+        // Print statement information (with null check)
+        String content = stmt.getContent();
+        if (content == null) content = "";
+        System.err.println(indent + "Statement [" + stmt.getType() + "]: " +
+                          (content.length() > 80 ?
+                           content.substring(0, 80) + "..." :
+                           content));
         
         // Print IN variable set
         System.err.println(indent + "  IN:  " + formatVarSet(stmt.InVar));

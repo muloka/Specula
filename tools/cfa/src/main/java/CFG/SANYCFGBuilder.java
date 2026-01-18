@@ -1470,17 +1470,18 @@ public class SANYCFGBuilder {
     private String extractOperatorName(SyntaxTreeNode opDefNode) {
         TreeNode[] children = opDefNode.heirs();
         if (children == null) return "unknown";
-        
+
         for (TreeNode child : children) {
             if (child instanceof SyntaxTreeNode) {
                 SyntaxTreeNode stn = (SyntaxTreeNode) child;
                 if (stn.getKind() == N_IdentLHS) {
                     // Find the identifier in the LHS
-                    return extractFirstIdentifier(stn);
+                    String identifier = extractFirstIdentifier(stn);
+                    return (identifier != null) ? identifier : "unknown";
                 }
             }
         }
-        
+
         return "unknown";
     }
     

@@ -263,7 +263,8 @@ public class CFGCALLGraph {
         visited.add(stmtNode);
         // Get current statement content
         String content = stmtNode.getContent();
-        
+        if (content == null) content = "";
+
         // Traverse all function names for matching
         for (String funcName : funcNames) {
             // (Recommended) Escape funcName to prevent it from containing regular expression meta characters

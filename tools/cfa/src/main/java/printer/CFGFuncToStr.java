@@ -232,13 +232,15 @@ public class CFGFuncToStr {
         for (int i = 0; i < children.size(); i++) {
             CFGStmtNode child = children.get(i);
             List<String> branchResult = DFS(child, convergencePoint);
-            if (i == 0) {
-                result.add(branchResult.get(0));
-            } else{
-                result.add("   " + branchResult.get(0));
-            }
-            for (int j = 1; j < branchResult.size(); j++) {
-                result.add("   " + branchResult.get(j));
+            if (!branchResult.isEmpty()) {
+                if (i == 0) {
+                    result.add(branchResult.get(0));
+                } else {
+                    result.add("   " + branchResult.get(0));
+                }
+                for (int j = 1; j < branchResult.size(); j++) {
+                    result.add("   " + branchResult.get(j));
+                }
             }
         }
         
