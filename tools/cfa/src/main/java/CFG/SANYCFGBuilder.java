@@ -41,7 +41,10 @@ public class SANYCFGBuilder {
     private static final int N_Identifier = 231;  // IDENTIFIER token type from TLAplusParserConstants
     private static final int N_IdentLHS = 366;
     private static final int N_ParenExpr = 393;
-    
+    private static final int N_Tuple = 423;
+    private static final int N_String = 418;
+    private static final int N_OpApplication = 387;
+
     // Additional node types for complex expressions (corrected from AST analysis)
     private static final int N_IfThenElse = 369;
     private static final int N_Case = 336;
@@ -462,13 +465,15 @@ public class SANYCFGBuilder {
      */
     private boolean isStatementOrExpression(SyntaxTreeNode node) {
         int kind = node.getKind();
-        return kind == N_ConjList || kind == N_DisjList || 
-               kind == N_IfThenElse || kind == N_Case || 
-               kind == N_LetExpr || kind == N_ChooseExpr || 
-               kind == N_SetExpr || kind == N_ExistsExpr || 
-               kind == N_ForallExpr || kind == N_InfixExpr || 
-               kind == N_ParenExpr || kind == N_GeneralId || 
-               kind == N_Number || kind == N_UnchangedExpr;
+        return kind == N_ConjList || kind == N_DisjList ||
+               kind == N_IfThenElse || kind == N_Case ||
+               kind == N_LetExpr || kind == N_ChooseExpr ||
+               kind == N_SetExpr || kind == N_ExistsExpr ||
+               kind == N_ForallExpr || kind == N_InfixExpr ||
+               kind == N_ParenExpr || kind == N_GeneralId ||
+               kind == N_Number || kind == N_UnchangedExpr ||
+               kind == N_Tuple || kind == N_String ||
+               kind == N_OpApplication;
     }
     
     /**
@@ -1307,7 +1312,39 @@ public class SANYCFGBuilder {
                         }
                     }
                     break;
-                    
+
+                case N_Tuple:
+                    // Handle tuples: <<elem1, elem2, ...>>
+                    result.append("<<");
+                    TreeNode[] tupleChildren = stn.heirs();
+                    if (tupleChildren != null) {
+                        boolean first = true;
+                        for (TreeNode child : tupleChildren) {
+                            StringBuilder childContent = new StringBuilder();
+                            reconstructExpressionRecursive(child, childContent);
+                            String content = childContent.toString().trim();
+                            // Skip delimiters (<<, >>, ,)
+                            if (content.equals("<<") || content.equals(">>") || content.equals(",")) {
+                                continue;
+                            }
+                            if (!content.isEmpty()) {
+                                if (!first) result.append(", ");
+                                result.append(content);
+                                first = false;
+                            }
+                        }
+                    }
+                    result.append(">>");
+                    break;
+
+                case N_String:
+                    // Handle string literals - the image is the string with quotes
+                    String strImage = stn.getImage();
+                    if (strImage != null) {
+                        result.append(strImage);
+                    }
+                    break;
+
                 default:
                     // For leaf nodes and simple nodes, try to get the image
                     String image = stn.getImage();
